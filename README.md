@@ -4,8 +4,4 @@
 # ![](https://user-images.githubusercontent.com/4441470/224455560-91ed3ee7-f510-4041-a8d2-3fc093025112.png) Soenneker.Runners.ffprobe
 ### Automatically updates the Soenneker.Libraries.ffprobe package
 
-## Installation
-
-```
-Install-Package Soenneker.Runners.ffprobe
-```
+This runner executes a GitHub action that updates another project. It's not meant for consumption.
