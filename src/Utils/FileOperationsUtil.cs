@@ -1,6 +1,9 @@
+using System;
 using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
+using Soenneker.Extensions.String;
 using Soenneker.Git.Util.Abstract;
 using Soenneker.Runners.ffprobe.Utils.Abstract;
 using Soenneker.Utils.Directory.Abstract;
@@ -9,7 +12,6 @@ using Soenneker.Utils.Dotnet.NuGet.Abstract;
 using Soenneker.Utils.Environment;
 using Soenneker.Utils.File.Abstract;
 using Soenneker.Utils.FileSync.Abstract;
-using Soenneker.Utils.SHA3;
 using Soenneker.Utils.SHA3.Abstract;
 
 namespace Soenneker.Runners.ffprobe.Utils;
@@ -27,8 +29,9 @@ public class FileOperationsUtil : IFileOperationsUtil
     private readonly ISha3Util _sha3Util;
 
     private string? _newHash;
-    
-    public FileOperationsUtil(IFileUtil fileUtil, ILogger<FileOperationsUtil> logger, IGitUtil gitUtil, IDotnetUtil dotnetUtil, IDotnetNuGetUtil dotnetNuGetUtil, IDirectoryUtil directoryUtil, IFileUtilSync fileUtilSync, ISha3Util sha3Util)
+
+    public FileOperationsUtil(IFileUtil fileUtil, ILogger<FileOperationsUtil> logger, IGitUtil gitUtil, IDotnetUtil dotnetUtil,
+        IDotnetNuGetUtil dotnetNuGetUtil, IDirectoryUtil directoryUtil, IFileUtilSync fileUtilSync, ISha3Util sha3Util)
     {
         _fileUtil = fileUtil;
         _logger = logger;
@@ -40,23 +43,23 @@ public class FileOperationsUtil : IFileOperationsUtil
         _sha3Util = sha3Util;
     }
 
-    public async ValueTask Process(string filePath)
+    public async ValueTask Process(string filePath, CancellationToken cancellationToken)
     {
-        string gitDirectory = _gitUtil.CloneToTempDirectory($"https://github.com/soenneker/soenneker.libraries.ffprobe");
+        string gitDirectory = _gitUtil.CloneToTempDirectory($"https://github.com/soenneker/{Constants.Library.ToLowerInvariantFast()}");
 
-        string targetExePath = Path.Combine(gitDirectory, "src", "Resources", "ffprobe.exe");
+        string targetExePath = Path.Combine(gitDirectory, "src", "Resources", Constants.FileName);
 
-        bool needToUpdate = await CheckForHashDifferences(gitDirectory, filePath);
+        bool needToUpdate = await CheckForHashDifferences(gitDirectory, filePath, cancellationToken);
 
         if (!needToUpdate)
             return;
 
-        await BuildPackAndPush(gitDirectory, targetExePath, filePath);
+        await BuildPackAndPush(gitDirectory, targetExePath, filePath, cancellationToken);
 
-        await SaveHashToGitRepo(gitDirectory);
+        await SaveHashToGitRepo(gitDirectory, cancellationToken);
     }
 
-    private async ValueTask BuildPackAndPush(string gitDirectory, string targetExePath, string filePath)
+    private async ValueTask BuildPackAndPush(string gitDirectory, string targetExePath, string filePath, CancellationToken cancellationToken)
     {
         _fileUtilSync.DeleteIfExists(targetExePath);
 
@@ -64,32 +67,29 @@ public class FileOperationsUtil : IFileOperationsUtil
 
         _fileUtilSync.Move(filePath, targetExePath);
 
-        string projFilePath = Path.Combine(gitDirectory, "src", "Soenneker.Libraries.ffprobe.csproj");
+        string projFilePath = Path.Combine(gitDirectory, "src", $"{Constants.Library}.csproj");
 
-        await _dotnetUtil.Restore(projFilePath);
+        await _dotnetUtil.Restore(projFilePath, cancellationToken: cancellationToken);
 
-        bool successful = await _dotnetUtil.Build(projFilePath, true, "Release", false);
+        bool successful = await _dotnetUtil.Build(projFilePath, true, "Release", false, cancellationToken: cancellationToken);
 
         if (!successful)
-        {
-            _logger.LogError("Build was not successful, exiting...");
-            return;
-        }
+            throw new Exception("Build was not successful, exiting...");
 
         string version = EnvironmentUtil.GetVariableStrict("BUILD_VERSION");
 
-        await _dotnetUtil.Pack(projFilePath, version, true, "Release", false, false, gitDirectory);
+        await _dotnetUtil.Pack(projFilePath, version, true, "Release", false, false, gitDirectory, cancellationToken: cancellationToken);
 
         string apiKey = EnvironmentUtil.GetVariableStrict("NUGET_API_KEY");
 
-        string nuGetPackagePath = Path.Combine(gitDirectory, $"Soenneker.Libraries.ffprobe.{version}.nupkg");
+        string nuGetPackagePath = Path.Combine(gitDirectory, $"{Constants.Library}.{version}.nupkg");
 
-        await _dotnetNuGetUtil.Push(nuGetPackagePath, apiKey);
+        await _dotnetNuGetUtil.Push(nuGetPackagePath, apiKey: apiKey, cancellationToken: cancellationToken);
     }
 
-    private async ValueTask<bool> CheckForHashDifferences(string gitDirectory, string filePath)
+    private async ValueTask<bool> CheckForHashDifferences(string gitDirectory, string filePath, CancellationToken cancellationToken)
     {
-        string? oldHash = await _fileUtil.TryReadFile(Path.Combine(gitDirectory, "hash.txt"));
+        string? oldHash = await _fileUtil.TryReadFile(Path.Combine(gitDirectory, "hash.txt"), true, cancellationToken);
 
         if (oldHash == null)
         {
@@ -97,7 +97,7 @@ public class FileOperationsUtil : IFileOperationsUtil
             return true;
         }
 
-        _newHash = await _sha3Util.HashFile(filePath);
+        _newHash = await _sha3Util.HashFile(filePath, true, cancellationToken);
 
         if (oldHash == _newHash)
         {
@@ -108,15 +108,15 @@ public class FileOperationsUtil : IFileOperationsUtil
         return true;
     }
 
-    private async ValueTask SaveHashToGitRepo(string gitDirectory)
+    private async ValueTask SaveHashToGitRepo(string gitDirectory, CancellationToken cancellationToken)
     {
         string targetHashFile = Path.Combine(gitDirectory, "hash.txt");
 
         _fileUtilSync.DeleteIfExists(targetHashFile);
 
-        await _fileUtil.WriteFile(targetHashFile, _newHash!);
+        await _fileUtil.WriteFile(targetHashFile, _newHash!, cancellationToken);
 
-        _fileUtilSync.DeleteIfExists(Path.Combine(gitDirectory, "src", "Resources", "ffprobe.exe"));
+        _fileUtilSync.DeleteIfExists(Path.Combine(gitDirectory, "src", "Resources", Constants.FileName));
 
         _gitUtil.AddIfNotExists(gitDirectory, targetHashFile);
 
@@ -129,7 +129,7 @@ public class FileOperationsUtil : IFileOperationsUtil
             string username = EnvironmentUtil.GetVariableStrict("Username");
             string token = EnvironmentUtil.GetVariableStrict("Token");
 
-            _gitUtil.Commit(gitDirectory, "Updates hash for new ffprobe version", name, email);
+            _gitUtil.Commit(gitDirectory, "Updates hash for new FFmpeg version", name, email);
 
             await _gitUtil.Push(gitDirectory, username, token);
         }
