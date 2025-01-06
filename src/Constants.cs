@@ -3,5 +3,5 @@
 public static class Constants
 {
     public const string FileName = "ffprobe.exe";
-    public const string Library = "Soenneker.Libraries.FFprobe";
+    public const string Library = "Soenneker.Libraries.ffprobe";
 }
