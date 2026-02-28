@@ -28,7 +28,8 @@ public class Program
 
         try
         {
-            await CreateHostBuilder(args).RunConsoleAsync(_cts.Token);
+            await CreateHostBuilder(args)
+                .RunConsoleAsync(_cts.Token);
         }
         catch (Exception e)
         {
@@ -54,15 +55,18 @@ public class Program
         LoggerConfigurationExtension.BuildBootstrapLoggerAndSetGloballySync(envEnum);
 
         IHostBuilder host = Host.CreateDefaultBuilder(args)
-            .ConfigureAppConfiguration((hostingContext, builder) =>
-            {
-                builder.AddEnvironmentVariables();
-                builder.SetBasePath(hostingContext.HostingEnvironment.ContentRootPath);
+                                .ConfigureAppConfiguration((hostingContext, builder) =>
+                                {
+                                    builder.AddEnvironmentVariables();
+                                    builder.SetBasePath(hostingContext.HostingEnvironment.ContentRootPath);
 
-                builder.Build();
-            })
-            .UseSerilog()
-            .ConfigureServices((_, services) => { Startup.ConfigureServices(services); });
+                                    builder.Build();
+                                })
+                                .UseSerilog()
+                                .ConfigureServices((_, services) =>
+                                {
+                                    Startup.ConfigureServices(services);
+                                });
 
         return host;
     }
